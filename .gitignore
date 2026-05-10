@@ -1,0 +1,25 @@
+# Generated output folders — contain game assets, do not commit
+mp3/
+wav/
+acm/
+txt/
+lip/
+textgrid/
+msg/
+dat/
+
+# snd2acm binary — download separately
+snd2acm.exe
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# macOS
+.DS_Store
+
+# MFA temporary folders
+mfa_*/
+fv_corpus_*/
