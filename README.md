@@ -117,6 +117,7 @@ The script auto-detects your `.MSG` file(s) from `./msg/` and your audio files f
 --datfile PATH    Output DAT file path (default: dat/vock.dat)
 --snd2acm PATH    Path to snd2acm.exe if not in script folder
 --mfa-env NAME    Conda environment name (default: aligner)
+--steps STEP ...  Run only the specified step(s): msg wav acm mfa lip dat
 --no-mfa          Skip MFA; use text-only phoneme approximation
 --no-acm          Skip ACM generation
 --no-dat          Skip DAT file creation
@@ -140,6 +141,34 @@ python3 vock.py --no-mfa
 # Generate everything except the DAT
 python3 vock.py --no-dat
 ```
+
+### Running individual steps
+
+Use `--steps` to run only specific parts of the pipeline. This is useful when
+files from a previous run already exist and you only need to redo one step.
+
+Available steps: `msg` `wav` `acm` `mfa` `lip` `dat`
+
+```bash
+# Rebuild just the DAT from existing files
+python3 vock.py --steps dat
+
+# Re-run MFA alignment and regenerate LIP files
+python3 vock.py --steps mfa lip
+
+# Re-run MFA, LIP, and DAT together
+python3 vock.py --steps mfa lip dat
+
+# Convert WAV to ACM only (e.g. after replacing audio files)
+python3 vock.py --steps acm
+
+# Re-run everything from WAV onwards (skip MSG parsing)
+python3 vock.py --steps wav acm mfa lip dat
+```
+
+When using `--steps`, skipped steps print `[skipped]` in the console so you
+can confirm what ran. Files from previous runs in the output folders are used
+as-is by later steps — it is your responsibility to ensure they are up to date.
 
 ## Notes
 

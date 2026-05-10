@@ -17,7 +17,7 @@ PIPELINE
                         [MFA align / approximation]
                                    │
                               TextGrid ──────────► LIP (Fallout format)
-                              
+
   MSG + TXT + ACM + LIP ──► vock.dat
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -41,7 +41,7 @@ REQUIRED TOOLS
   snd2acm   - ACM encoder (snd2acm.exe in script folder or on PATH)
   MFA       - forced aligner (conda env 'aligner', see below)
 
-ONE-TIME MFA SETUP (Linux / WSL):
+ONE-TIME MFA SETUP (Linux):
   wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
   bash Miniconda3-latest-Linux-x86_64.sh -b
   ~/miniconda3/bin/conda init bash && exec bash
@@ -56,20 +56,22 @@ USAGE
 
   # Full pipeline (MFA alignment):
   conda activate aligner
-  python3 vock.py --msg msg/ACMORLIS.MSG
+  python3 vock.py
+
+  # Run specific steps only:
+  python3 vock.py --steps dat
+  python3 vock.py --steps mfa lip dat
+  python3 vock.py --steps wav acm
 
   # Skip MFA (text approximation, no conda needed):
-  python3 vock.py --msg msg/ACMORLIS.MSG --no-mfa
-
-  # Skip ACM generation (if snd2acm not available):
-  python3 vock.py --msg msg/ACMORLIS.MSG --no-acm
+  python3 vock.py --no-mfa
 
   # All options:
-  python3 vock.py [--msg FILE] [--mp3dir DIR] [--txtdir DIR]
-                            [--wavdir DIR] [--acmdir DIR]
-                            [--textgriddir DIR] [--lipdir DIR]
-                            [--snd2acm PATH] [--mfa-env NAME]
-                            [--no-mfa] [--no-acm]
+  python3 vock.py [--msg FILE/DIR] [--mp3dir DIR] [--wavdir DIR]
+                  [--txtdir DIR] [--acmdir DIR] [--textgriddir DIR]
+                  [--lipdir DIR] [--datfile PATH] [--snd2acm PATH]
+                  [--mfa-env NAME] [--steps STEP [STEP ...]]
+                  [--no-mfa] [--no-acm] [--no-dat]
 """
 
 import argparse
@@ -86,7 +88,7 @@ import sys
 LIP_VERSION     = 0x00000002
 LIP_UNKNOWN     = 0x00005800
 LIP_SAMPLE_RATE = 22050
-LIP_MULTIPLIER  = 2   # offset = seconds × 2 × 22050
+LIP_MULTIPLIER  = 2   # offset = seconds x 2 x 22050
 
 # ─── ARPAbet → Fallout LIP phoneme code ──────────────────────────────────────
 
@@ -297,13 +299,10 @@ def find_snd2acm(hint: str = None) -> str | None:
 def wav_to_acm(snd2acm: str, wav_path: str, acm_path: str) -> None:
     # Build the command array
     cmd = [snd2acm, "-16", wav_path, acm_path, "-q0"]
-    
     # If we are on Linux/Mac and it's a Windows executable, prepend 'wine'
     if os.name != 'nt' and snd2acm.lower().endswith('.exe'):
         cmd.insert(0, "wine")
-
     r = subprocess.run(cmd, capture_output=True, text=True)
-    
     if r.returncode != 0:
         raise RuntimeError(f"snd2acm failed:\n{r.stderr.strip()}")
     if not os.path.isfile(acm_path) or os.path.getsize(acm_path) == 0:
@@ -359,6 +358,7 @@ def _npc_folder(stem):
     return re.sub(r"\d+$", "", stem).upper()
 
 def collect_dat_entries(msg_paths, acm_dir, lip_dir, txt_dir, skip_acm=False):
+    """Build (dat_path, local_path) pairs. ACM extensions uppercase, backslash separators."""
     entries = []
     for msg_path in msg_paths:
         if os.path.isfile(msg_path):
@@ -396,7 +396,7 @@ def write_dat2(out_path, entries):
     tree = bytearray()
     tree += struct.pack("<I", len(entries))
     for i, (dat_path, _local) in enumerate(entries):
-        raw     = file_data[i]
+        raw = file_data[i]
         fn_bytes = dat_path.encode("ascii")
         tree += struct.pack("<I", len(fn_bytes))
         tree += fn_bytes
@@ -420,13 +420,16 @@ def print_section(title: str) -> None:
     print(f"  {title}")
     print(f"{'─'*60}")
 
+# All valid step names in execution order
+ALL_STEPS = ["msg", "wav", "acm", "mfa", "lip", "dat"]
+
 def main():
     parser = argparse.ArgumentParser(
         description="V.O.C.K. — Vocal Output Creation Kit\nFallout 2 voice pipeline: MSG+MP3 → TXT+WAV+ACM+LIP+DAT",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--msg",          default=None,
-        help="Path to .MSG file. If omitted, auto-detects from ./msg/")
+        help="Path to .MSG file or folder. If omitted, auto-detects from ./msg/")
     parser.add_argument("--mp3dir",       default="mp3")
     parser.add_argument("--txtdir",       default="txt")
     parser.add_argument("--wavdir",       default="wav")
@@ -445,138 +448,199 @@ def main():
         help="Skip DAT file creation")
     parser.add_argument("--datfile",      default="dat/vock.dat",
         help="Output DAT filename (default: dat/vock.dat)")
+    parser.add_argument("--steps",        nargs="+", metavar="STEP",
+        choices=ALL_STEPS,
+        help=(
+            "Run only the specified step(s) and skip the rest. "
+            f"Available: {', '.join(ALL_STEPS)}. "
+            "Example: --steps mfa lip dat"
+        ))
     args = parser.parse_args()
 
-    # ── Find and parse MSG file(s) ───────────────────────────────────────────
-    print_section("STEP 1 — Parse MSG file(s) → TXT")
-
-    # Collect all MSG paths to process
-    msg_paths = []
-    if args.msg:
-        if os.path.isfile(args.msg):
-            msg_paths = [args.msg]
-        elif os.path.isdir(args.msg):
-            msg_paths = sorted(
-                os.path.join(args.msg, f)
-                for f in os.listdir(args.msg)
-                if f.upper().endswith(".MSG"))
-        else:
-            sys.exit(f"MSG path not found: '{args.msg}'")
+    # Determine which steps to run. If --steps not given, run everything.
+    if args.steps:
+        run = set(args.steps)
     else:
-        msg_dir = "msg"
-        if os.path.isdir(msg_dir):
-            msg_paths = sorted(
-                os.path.join(msg_dir, f)
-                for f in os.listdir(msg_dir)
-                if f.upper().endswith(".MSG"))
-        if not msg_paths:
-            sys.exit("No .MSG files found in ./msg/ — pass --msg to specify a file or folder.")
+        run = set(ALL_STEPS)
+        # Apply --no-* flags when running the full pipeline
+        if args.no_acm:
+            run.discard("acm")
+        if args.no_mfa:
+            run.discard("mfa")
+        if args.no_dat:
+            run.discard("dat")
 
-    all_entries = []
-    for msg_path in msg_paths:
-        print(f"  Reading {msg_path}")
-        found = parse_msg(msg_path)
-        if not found:
-            print(f"  [warn] No audio lines found in '{msg_path}' — skipping.")
-            continue
-        all_entries.extend(found)
-        print(f"  {len(found)} line(s) found.")
+    # ── State that may be populated by earlier steps and used by later ones ──
+    msg_paths  = []
+    entries    = []
+    txt_map    = {}
+    pairs      = []
+    wav_pairs  = []
 
-    if not all_entries:
-        sys.exit("No audio lines found in any MSG file.")
+    # Add these counters here:
+    acm_ok     = 0
+    lip_ok     = 0
+    lip_approx = 0
+    lip_fail   = 0
 
-    os.makedirs(args.txtdir, exist_ok=True)
-    for tag, text in all_entries:
-        out = os.path.join(args.txtdir, f"{tag}.txt")
-        with open(out, "w", encoding="utf-8") as fh:
-            fh.write(text)
-    print(f"  {len(all_entries)} TXT file(s) written to '{args.txtdir}/'")
+    # ── STEP 1: MSG → TXT ────────────────────────────────────────────────────
+    if "msg" in run:
+        print_section("STEP 1 — Parse MSG file(s) → TXT")
 
-    entries = all_entries
-    txt_map = {tag: text for tag, text in entries}
-
-    # ── Collect audio files (WAV takes priority over MP3) ────────────────────
-    # Scan both ./wav/ and ./mp3/ folders. If a WAV already exists for a stem
-    # it is used as-is (no conversion needed). MP3s are converted to WAV.
-    audio_map = {}   # stem -> (path, needs_conversion)
-
-    wav_src_dir = args.wavdir   # look for pre-existing WAVs here too
-    if os.path.isdir(wav_src_dir):
-        for f in os.listdir(wav_src_dir):
-            if f.upper().endswith(".WAV"):
-                stem = os.path.splitext(f)[0]
-                audio_map[stem] = (os.path.join(wav_src_dir, f), False)
-
-    if os.path.isdir(args.mp3dir):
-        for f in sorted(os.listdir(args.mp3dir)):
-            if f.upper().endswith(".MP3"):
-                stem = os.path.splitext(f)[0]
-                if stem not in audio_map:   # WAV already found? skip MP3
-                    audio_map[stem] = (os.path.join(args.mp3dir, f), True)
-
-    if not audio_map:
-        sys.exit("No audio files found in wav/ or mp3/ directories.")
-
-    # Match to TXT files
-    pairs = []   # [(stem, audio_path, needs_conversion, txt_path)]
-    for stem in sorted(audio_map):
-        audio_path, needs_conv = audio_map[stem]
-        txt_path = os.path.join(args.txtdir, stem + ".txt")
-        if not os.path.isfile(txt_path):
-            print(f"  [skip] {stem}: no matching TXT (not in MSG file?)")
-            continue
-        pairs.append((stem, audio_path, needs_conv, txt_path))
-
-    if not pairs:
-        sys.exit("No matching audio+TXT pairs found.")
-
-    # ── Audio → WAV ───────────────────────────────────────────────────────────
-    print_section("STEP 2 — Prepare WAV files (22050 Hz mono)")
-    os.makedirs(args.wavdir, exist_ok=True)
-
-    wav_pairs = []   # [(stem, wav_path, txt_path)]
-    for stem, audio_path, needs_conv, txt_path in pairs:
-        wav_path = os.path.join(args.wavdir, stem + ".wav")
-        if not needs_conv:
-            # Already a WAV — normalise to 22050 Hz mono if needed,
-            # or just use it directly if it is already in the wav folder.
-            if os.path.abspath(audio_path) != os.path.abspath(wav_path):
-                try:
-                    r = subprocess.run(
-                        ["ffmpeg", "-y", "-i", audio_path,
-                         "-ar", "22050", "-ac", "1",
-                         "-c:a", "pcm_s16le", wav_path],
-                        capture_output=True, text=True)
-                    if r.returncode != 0:
-                        raise RuntimeError(r.stderr.strip())
-                    print(f"  normalised {wav_path}")
-                except Exception as e:
-                    print(f"  [warn] {stem}: ffmpeg normalise failed ({e}), copying as-is")
-                    shutil.copy2(audio_path, wav_path)
+        if args.msg:
+            if os.path.isfile(args.msg):
+                msg_paths = [args.msg]
+            elif os.path.isdir(args.msg):
+                msg_paths = sorted(
+                    os.path.join(args.msg, f)
+                    for f in os.listdir(args.msg)
+                    if f.upper().endswith(".MSG"))
             else:
-                print(f"  using  {wav_path}  (already in wav folder)")
-            wav_pairs.append((stem, wav_path, txt_path))
+                sys.exit(f"MSG path not found: '{args.msg}'")
         else:
-            try:
-                mp3_to_wav(audio_path, wav_path)
-                print(f"  wrote  {wav_path}")
-                wav_pairs.append((stem, wav_path, txt_path))
-            except RuntimeError as e:
-                print(f"  [error] {stem}: {e}")
+            msg_dir = "msg"
+            if os.path.isdir(msg_dir):
+                msg_paths = sorted(
+                    os.path.join(msg_dir, f)
+                    for f in os.listdir(msg_dir)
+                    if f.upper().endswith(".MSG"))
+            if not msg_paths:
+                sys.exit("No .MSG files found in ./msg/ — pass --msg to specify a file or folder.")
 
-    # ── WAV → ACM ─────────────────────────────────────────────────────────────
-    print_section("STEP 3 — Convert WAV → ACM")
+        all_entries = []
+        for msg_path in msg_paths:
+            print(f"  Reading {msg_path}")
+            found = parse_msg(msg_path)
+            if not found:
+                print(f"  [warn] No audio lines found in '{msg_path}' — skipping.")
+                continue
+            all_entries.extend(found)
+            print(f"  {len(found)} line(s) found.")
 
-    if args.no_acm:
-        print("  Skipped (--no-acm)")
+        if not all_entries:
+            sys.exit("No audio lines found in any MSG file.")
+
+        os.makedirs(args.txtdir, exist_ok=True)
+        for tag, text in all_entries:
+            out = os.path.join(args.txtdir, f"{tag}.txt")
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        print(f"  {len(all_entries)} TXT file(s) written to '{args.txtdir}/'")
+
+        entries = all_entries
+        txt_map = {tag: text for tag, text in entries}
+
     else:
+        print_section("STEP 1 — Parse MSG file(s) → TXT  [skipped]")
+        # Still need msg_paths for the DAT step even if MSG parsing is skipped
+        if args.msg:
+            if os.path.isfile(args.msg):
+                msg_paths = [args.msg]
+            elif os.path.isdir(args.msg):
+                msg_paths = sorted(
+                    os.path.join(args.msg, f)
+                    for f in os.listdir(args.msg)
+                    if f.upper().endswith(".MSG"))
+        else:
+            msg_dir = "msg"
+            if os.path.isdir(msg_dir):
+                msg_paths = sorted(
+                    os.path.join(msg_dir, f)
+                    for f in os.listdir(msg_dir)
+                    if f.upper().endswith(".MSG"))
+        # Load txt_map from existing TXT files for the LIP step
+        if os.path.isdir(args.txtdir):
+            for f in os.listdir(args.txtdir):
+                if f.endswith(".txt"):
+                    stem = os.path.splitext(f)[0]
+                    txt_map[stem] = open(
+                        os.path.join(args.txtdir, f), encoding="utf-8").read().strip()
+        entries = list(txt_map.items())
+
+    # ── STEP 2: Audio → WAV ──────────────────────────────────────────────────
+    if "wav" in run:
+        print_section("STEP 2 — Prepare WAV files (22050 Hz mono)")
+
+        audio_map = {}
+        wav_src_dir = args.wavdir
+        if os.path.isdir(wav_src_dir):
+            for f in os.listdir(wav_src_dir):
+                if f.upper().endswith(".WAV"):
+                    stem = os.path.splitext(f)[0]
+                    audio_map[stem] = (os.path.join(wav_src_dir, f), False)
+
+        if os.path.isdir(args.mp3dir):
+            for f in sorted(os.listdir(args.mp3dir)):
+                if f.upper().endswith(".MP3"):
+                    stem = os.path.splitext(f)[0]
+                    if stem not in audio_map:
+                        audio_map[stem] = (os.path.join(args.mp3dir, f), True)
+
+        if not audio_map:
+            sys.exit("No audio files found in wav/ or mp3/ directories.")
+
+        pairs = []
+        for stem in sorted(audio_map):
+            audio_path, needs_conv = audio_map[stem]
+            txt_path = os.path.join(args.txtdir, stem + ".txt")
+            if not os.path.isfile(txt_path):
+                print(f"  [skip] {stem}: no matching TXT (not in MSG file?)")
+                continue
+            pairs.append((stem, audio_path, needs_conv, txt_path))
+
+        if not pairs:
+            sys.exit("No matching audio+TXT pairs found.")
+
+        os.makedirs(args.wavdir, exist_ok=True)
+        for stem, audio_path, needs_conv, txt_path in pairs:
+            wav_path = os.path.join(args.wavdir, stem + ".wav")
+            if not needs_conv:
+                if os.path.abspath(audio_path) != os.path.abspath(wav_path):
+                    try:
+                        r = subprocess.run(
+                            ["ffmpeg", "-y", "-i", audio_path,
+                             "-ar", "22050", "-ac", "1",
+                             "-c:a", "pcm_s16le", wav_path],
+                            capture_output=True, text=True)
+                        if r.returncode != 0:
+                            raise RuntimeError(r.stderr.strip())
+                        print(f"  normalised {wav_path}")
+                    except Exception as e:
+                        print(f"  [warn] {stem}: ffmpeg normalise failed ({e}), copying as-is")
+                        shutil.copy2(audio_path, wav_path)
+                else:
+                    print(f"  using  {wav_path}  (already in wav folder)")
+                wav_pairs.append((stem, wav_path, txt_path))
+            else:
+                try:
+                    mp3_to_wav(audio_path, wav_path)
+                    print(f"  wrote  {wav_path}")
+                    wav_pairs.append((stem, wav_path, txt_path))
+                except RuntimeError as e:
+                    print(f"  [error] {stem}: {e}")
+
+    else:
+        print_section("STEP 2 — Prepare WAV files  [skipped]")
+        # Populate wav_pairs from existing WAV files for downstream steps
+        if os.path.isdir(args.wavdir):
+            for f in sorted(os.listdir(args.wavdir)):
+                if f.upper().endswith(".WAV"):
+                    stem     = os.path.splitext(f)[0]
+                    wav_path = os.path.join(args.wavdir, f)
+                    txt_path = os.path.join(args.txtdir, stem + ".txt")
+                    if os.path.isfile(txt_path):
+                        wav_pairs.append((stem, wav_path, txt_path))
+
+    # ── STEP 3: WAV → ACM ────────────────────────────────────────────────────
+    if "acm" in run:
+        print_section("STEP 3 — Convert WAV → ACM")
         snd2acm_path = find_snd2acm(args.snd2acm)
         if not snd2acm_path:
             print("  snd2acm not found — skipping ACM generation.")
             print("  Put snd2acm.exe in the same folder as this script to enable it.")
         else:
             os.makedirs(args.acmdir, exist_ok=True)
-            acm_ok = 0
+            # acm_ok = 0
             for stem, wav_path, _txt in wav_pairs:
                 acm_path = os.path.join(args.acmdir, stem + ".acm")
                 try:
@@ -587,16 +651,14 @@ def main():
                 except RuntimeError as e:
                     print(f"  [error] {stem}: {e}")
             print(f"  {acm_ok}/{len(wav_pairs)} ACM file(s) written.")
-
-    # ── MFA alignment ─────────────────────────────────────────────────────────
-    print_section("STEP 4 — MFA forced alignment → TextGrid")
-    os.makedirs(args.textgriddir, exist_ok=True)
-
-    mfa_ok = False
-    if args.no_mfa:
-        print("  Skipped (--no-mfa)")
     else:
-        # Build a corpus folder: WAV + TXT side by side
+        print_section("STEP 3 — Convert WAV → ACM  [skipped]")
+
+    # ── STEP 4: MFA alignment ─────────────────────────────────────────────────
+    if "mfa" in run:
+        print_section("STEP 4 — MFA forced alignment → TextGrid")
+        os.makedirs(args.textgriddir, exist_ok=True)
+
         import tempfile
         with tempfile.TemporaryDirectory(prefix="fv_corpus_") as corpus_dir:
             for stem, wav_path, txt_path in wav_pairs:
@@ -609,7 +671,6 @@ def main():
             mfa_ok = run_mfa(corpus_dir, mfa_tmp_out, args.mfa_env)
 
             if mfa_ok:
-                # Copy TextGrids to permanent textgrid folder
                 tg_count = 0
                 for f in os.listdir(mfa_tmp_out):
                     if f.endswith(".TextGrid"):
@@ -620,52 +681,55 @@ def main():
                 print(f"\n  {tg_count} TextGrid(s) saved to '{args.textgriddir}/'")
             else:
                 print("\n  MFA failed — will use text approximation for LIP files.")
-
-    # ── Generate LIP files ────────────────────────────────────────────────────
-    print_section("STEP 5 — Generate LIP files")
-    os.makedirs(args.lipdir, exist_ok=True)
-
-    lip_ok = 0
-    lip_approx = 0
-    lip_fail = 0
-
-    for stem, wav_path, txt_path in wav_pairs:
-        lip_path = os.path.join(args.lipdir, stem + ".lip")
-        tg_path  = os.path.join(args.textgriddir, stem + ".TextGrid")
-
-        try:
-            duration = get_audio_duration(wav_path)
-        except Exception as e:
-            print(f"  [error] {stem}: could not read duration: {e}")
-            lip_fail += 1
-            continue
-
-        # Try MFA TextGrid first
-        if not args.no_mfa and os.path.isfile(tg_path):
-            try:
-                events = build_events_from_textgrid(tg_path)
-                write_lip(lip_path, stem, duration, events)
-                print(f"  wrote  {lip_path}  ({duration:.3f}s, {len(events)} events, MFA)")
-                lip_ok += 1
-                continue
-            except Exception as e:
-                print(f"  [warn] {stem}: TextGrid error ({e}), falling back to approx")
-
-        # Fallback: text approximation
-        text = txt_map.get(stem, "")
-        if not text:
-            with open(txt_path, encoding="utf-8") as fh:
-                text = fh.read().strip()
-        events = text_fallback_events(text, duration)
-        write_lip(lip_path, stem, duration, events)
-        print(f"  wrote  {lip_path}  ({duration:.3f}s, {len(events)} events, approx)")
-        lip_approx += 1
-
-    # ── Build DAT file ────────────────────────────────────────────
-    print_section("STEP 6 — Build vock.dat")
-    if args.no_dat:
-        print("  Skipped (--no-dat)")
     else:
+        print_section("STEP 4 — MFA forced alignment  [skipped]")
+
+    # ── STEP 5: Generate LIP files ────────────────────────────────────────────
+    if "lip" in run:
+        print_section("STEP 5 — Generate LIP files")
+        os.makedirs(args.lipdir, exist_ok=True)
+
+        # lip_ok = 0
+        # lip_approx = 0
+        lip_fail = 0
+
+        for stem, wav_path, txt_path in wav_pairs:
+            lip_path = os.path.join(args.lipdir, stem + ".lip")
+            tg_path  = os.path.join(args.textgriddir, stem + ".TextGrid")
+
+            try:
+                duration = get_audio_duration(wav_path)
+            except Exception as e:
+                print(f"  [error] {stem}: could not read duration: {e}")
+                lip_fail += 1
+                continue
+
+            if os.path.isfile(tg_path):
+                try:
+                    events = build_events_from_textgrid(tg_path)
+                    write_lip(lip_path, stem, duration, events)
+                    print(f"  wrote  {lip_path}  ({duration:.3f}s, {len(events)} events, MFA)")
+                    lip_ok += 1
+                    continue
+                except Exception as e:
+                    print(f"  [warn] {stem}: TextGrid error ({e}), falling back to approx")
+
+            text = txt_map.get(stem, "")
+            if not text and os.path.isfile(txt_path):
+                with open(txt_path, encoding="utf-8") as fh:
+                    text = fh.read().strip()
+            events = text_fallback_events(text, duration)
+            write_lip(lip_path, stem, duration, events)
+            print(f"  wrote  {lip_path}  ({duration:.3f}s, {len(events)} events, approx)")
+            lip_approx += 1
+
+        print(f"\n  {lip_ok} MFA + {lip_approx} approx + {lip_fail} failed")
+    else:
+        print_section("STEP 5 — Generate LIP files  [skipped]")
+
+    # ── STEP 6: Build DAT ────────────────────────────────────────────────────
+    if "dat" in run:
+        print_section("STEP 6 — Build vock.dat")
         os.makedirs(os.path.dirname(args.datfile) or ".", exist_ok=True)
         try:
             dat_entries = collect_dat_entries(
@@ -673,7 +737,7 @@ def main():
                 acm_dir   = args.acmdir,
                 lip_dir   = args.lipdir,
                 txt_dir   = args.txtdir,
-                skip_acm  = args.no_acm,
+                skip_acm  = ("acm" not in run and args.no_acm),
             )
             if not dat_entries:
                 print("  No files to pack — skipping.")
@@ -684,16 +748,25 @@ def main():
                       f"({len(dat_entries)} files, {total_kb:.1f} KB)")
         except Exception as e:
             print(f"  [error] DAT creation failed: {e}")
+    else:
+        print_section("STEP 6 — Build vock.dat  [skipped]")
 
-    # ── Summary ─────────────────────────────────────────────────────────
+    # ── Summary ──────────────────────────────────────────────────────────────
     print(f"\n{chr(0x2550)*60}")
     print(f"  DONE")
     print(f"{chr(0x2550)*60}")
-    print(f"  TXT files : {len(entries)}")
-    print(f"  WAV files : {len(wav_pairs)}")
-    print(f"  LIP files : {lip_ok} with MFA  +  {lip_approx} approximated"
-          f"  ({lip_fail} failed)")
-    print(f"  DAT file  : {args.datfile}")
+    steps_run = sorted(run, key=ALL_STEPS.index)
+    print(f"  Steps run : {', '.join(steps_run)}")
+    
+    # Detailed file counts
+    print(f"  TXT files : {len(entries) if 'msg' in run else 'Skipped (used existing)'}")
+    print(f"  WAV files : {len(wav_pairs) if 'wav' in run else 'Skipped (used existing)'}")
+    print(f"  ACM files : {acm_ok if 'acm' in run else 'Skipped'}")
+    if "lip" in run:
+        print(f"  LIP files : {lip_ok} with MFA  +  {lip_approx} approximated  ({lip_fail} failed)")
+    else:
+        print(f"  LIP files : Skipped")
+    print(f"  DAT file  : {args.datfile if 'dat' in run else 'Skipped'}")
     print(f"  Folders   : {args.txtdir}/  {args.wavdir}/  {args.acmdir}/  "
           f"{args.textgriddir}/  {args.lipdir}/")
     print()
