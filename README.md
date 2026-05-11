@@ -22,7 +22,7 @@ All intermediate files (WAV, TextGrid) are kept permanently so you can re-run in
 
 ```
 text\english\dialog\*.MSG
-sound\Speech\NPC\*.ACM
+sound\Speech\NPC\*.acm
 sound\Speech\NPC\*.lip
 sound\Speech\NPC\*.txt
 ```
@@ -30,7 +30,7 @@ sound\Speech\NPC\*.txt
 Where NPC is the identifier for that particular NPC. For example, Aunt Morlis is identified by MOR:
 ```
 text\english\dialog\ACMORLIS.MSG
-sound\Speech\MOR\MOR1.ACM
+sound\Speech\MOR\MOR1.acm
 sound\Speech\MOR\MOR1.lip
 sound\Speech\MOR\MOR1.txt
 ...
@@ -72,11 +72,6 @@ Extract and place `snd2acm.exe` in the same folder as `vock.py`. Install Wine to
 sudo apt install wine
 ```
 
-Change capitalization to match the script:
-```bash
-mv SND2ACM.EXE snd2acm.exe
-```
-
 ### 3. Montreal Forced Aligner (MFA)
 Used for accurate per-phoneme lip sync timing. One-time setup:
 
@@ -89,7 +84,7 @@ bash Miniconda3-latest-Linux-x86_64.sh -b
 # Create the MFA environment
 conda create -n aligner -c conda-forge montreal-forced-aligner python=3.10 -y
 
-# Download the English models (once only)
+# Download the English models
 conda activate aligner
 mfa model download acoustic   english_us_arpa
 mfa model download dictionary english_us_arpa
@@ -194,18 +189,18 @@ Uses the Fallout 2 DAT2 format (little-endian). Files are stored uncompressed. F
 
 You must own a legal copy of Fallout 2 to do this.
 
-1. Install fo2dat: fo2dat is a tool used to unpack Fallout MASTER.DAT files.
-```bash
-pip install fo2dat
-```
+**fo2dat** is a tool used to unpack Fallout 2 DAT files. You need to build it from source:
 
-2. Extract the MSG files: Find your MASTER.DAT file (usually in the Fallout 2 installation folder). Run the following command to extract the dialogue files:
+GitHub: https://github.com/falltergeist/fo2dat
+
+Once built, extract the dialogue files from your master.dat:
+
 ```bash
 mkdir master
 fo2dat -xf master.dat -C master
 ```
 
-3. Copy the specific .MSG file you want to edit into the `vock/msg/` folder.
+Copy the specific .MSG file you want to edit into the `vock/msg/` folder.
 
 ## How to edit the MSG file
 

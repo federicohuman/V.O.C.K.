@@ -159,7 +159,7 @@ MSG_LINE_RE = re.compile(r"^\s*\{[^}]*\}\s*\{([^}]*)\}\s*\{(.*)\}\s*$")
 def parse_msg(path: str) -> list:
     """Return [(audio_tag, text), ...] for every line with a non-empty tag."""
     results = []
-    with open(path, encoding="latin-1") as fh:
+    with open(path, encoding="cp1252") as fh:
         for line in fh:
             m = MSG_LINE_RE.match(line)
             if not m:
@@ -288,8 +288,11 @@ def find_snd2acm(hint: str = None) -> str | None:
     candidates += [
         "snd2acm",
         "snd2acm.exe",
+        "SND2ACM.EXE",
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "snd2acm.exe"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "SND2ACM.EXE"),
         os.path.join(os.getcwd(), "snd2acm.exe"),
+        os.path.join(os.getcwd(), "SND2ACM.EXE"),
     ]
     for c in candidates:
         if shutil.which(c) or os.path.isfile(c):
@@ -358,7 +361,7 @@ def _npc_folder(stem):
     return re.sub(r"\d+$", "", stem).upper()
 
 def collect_dat_entries(msg_paths, acm_dir, lip_dir, txt_dir, skip_acm=False):
-    """Build (dat_path, local_path) pairs. ACM extensions uppercase, backslash separators."""
+    """Build (dat_path, local_path) pairs. Backslash separators."""
     entries = []
     for msg_path in msg_paths:
         if os.path.isfile(msg_path):
@@ -377,7 +380,7 @@ def collect_dat_entries(msg_paths, acm_dir, lip_dir, txt_dir, skip_acm=False):
         if not skip_acm:
             acm_path = os.path.join(acm_dir, stem + ".acm")
             if os.path.isfile(acm_path):
-                entries.append((f"{base}\\{stem}.ACM", acm_path))
+                entries.append((f"{base}\\{stem}.acm", acm_path))
         txt_path = os.path.join(txt_dir, stem + ".txt")
         if os.path.isfile(txt_path):
             entries.append((f"{base}\\{stem}.txt", txt_path))
