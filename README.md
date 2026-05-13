@@ -6,14 +6,13 @@ Give it a `.MSG` dialogue file and a folder of audio files (mp3 or wav) — it p
 ## What it does
 
 ```
-  MSG  ───────────────────────────────────────────────► TXT (one per line)
-  MP3  ──[FFmpeg 22050Hz mono 16-bit]──► wav-enc/
-  WAV  ──[FFmpeg validate/re-encode]───► wav-enc/ ────► ACM (via snd2acm)
+  MSG ────────────────────────────────────────────────► TXT (one per line)
+  WAV or MP3 ──[Normalize and encode]───► wav-enc/ ───► ACM (via snd2acm)
                                               │
                                    [MFA align / approximation]
                                               │
                                         TextGrid ─────► LIP (Fallout format)
-                              
+
   MSG + TXT + ACM + LIP ──────────────────────────────► DAT (vock.dat)
 ```
 
@@ -132,6 +131,8 @@ The script auto-detects your `.MSG` file(s) from `./msg/` and your audio files f
 --datfile PATH    Output DAT file path (default: dat/vock.dat)
 --snd2acm PATH    Path to snd2acm.exe if not in script folder
 --mfa-env NAME    Conda environment name (default: aligner)
+--lufs FLOAT      Target loudness in LUFS for normalization (default: -16.0)
+--no-norm         Skip EBU R128 loudness normalization during the encode step
 --steps STEP ...  Run only the specified step(s): msg wav enc acm mfa lip dat
 --no-enc          Skip audio collection, WAV encoding, and ACM generation (wav, enc, acm steps)
 --no-mfa          Skip MFA; use text-only phoneme approximation
@@ -147,6 +148,12 @@ python3 vock.py
 
 # Custom DAT filename
 python3 vock.py --datfile dat/patch001.dat
+
+# Disable loudness normalization completely
+python3 vock.py --no-norm
+
+# Adjust the target loudness (e.g. make it slightly quieter)
+python3 vock.py --lufs -18.0
 
 # Skip encoding and ACM (WAV-only workflow without snd2acm)
 python3 vock.py --no-enc
@@ -193,6 +200,7 @@ When using `--steps`, skipped steps print `[skipped]` in the console so you can 
 ## Notes
 
 - **WAV takes priority over MP3.** If both exist for the same file stem, the WAV is used and the MP3 is ignored.
+- **Loudness Normalization.** Audio is automatically normalized to -16 LUFS via EBU R128 during the `enc` step to match original game files. Use `--no-norm` to disable this or `--lufs` to change the target.
 - **`wav/` is for source files; `wav-enc/` is for output.** Files in `wav/` can be any sample rate or bit depth — the `enc` step normalises everything to 22050 Hz mono 16-bit PCM. `wav-enc/` is what `snd2acm` and MFA actually read.
 - **`--no-enc` skips audio collection, encoding, and ACM.** Because `enc` depends on `wav`, and `acm` depends on `wav-enc/` output, passing `--no-enc` automatically drops all three (`wav`, `enc`, `acm`) from the run, preventing snd2acm from being fed incorrectly formatted files.
 - **`--no-acm` skips ACM only.** The `enc` step still runs and `wav-enc/` is populated. Useful if you want to inspect the encoded audio before committing to ACM generation.

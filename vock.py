@@ -11,13 +11,12 @@ WAV-ENC, ACM, TextGrid, LIP and DAT files automatically.
 PIPELINE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  MSG  ────────────────────────────────────────────────► TXT (one per line)
-  MP3  ──[FFmpeg 22050Hz mono 16-bit]──► wav-enc/
-  WAV  ──[FFmpeg validate/re-encode]───► wav-enc/ ────► ACM (via snd2acm)
+  MSG ────────────────────────────────────────────────► TXT (one per line)
+  WAV or MP3 ──[Normalize and encode]───► wav-enc/ ───► ACM (via snd2acm)
                                               │
                                    [MFA align / approximation]
                                               │
-                                        TextGrid ──────► LIP (Fallout format)
+                                        TextGrid ─────► LIP (Fallout format)
 
   MSG + TXT + ACM + LIP ──────────────────────────────► DAT (vock.dat)
 
@@ -75,9 +74,9 @@ USAGE
   python3 vock.py [--msg FILE/DIR] [--mp3dir DIR] [--wavdir DIR]
                   [--wavencdir DIR] [--txtdir DIR] [--acmdir DIR]
                   [--textgriddir DIR] [--lipdir DIR] [--datfile PATH]
-                  [--snd2acm PATH] [--mfa-env NAME]
+                  [--snd2acm PATH] [--mfa-env NAME] [--lufs FLOAT]
                   [--steps STEP [STEP ...]]
-                  [--no-enc] [--no-mfa] [--no-acm] [--no-dat]
+                  [--no-enc] [--no-mfa] [--no-acm] [--no-dat] [--no-norm]
 """
 
 import argparse
@@ -89,7 +88,7 @@ import struct
 import subprocess
 import sys
 
-# ─── LIP constants (from BlackElectric's LIPS.py) ────────────────────────────
+# ─── LIP constants (from Black_Electric's LIPS.py) ────────────────────────────
 
 LIP_VERSION     = 0x00000002
 LIP_UNKNOWN     = 0x00005800
@@ -227,15 +226,6 @@ def _ffprobe_duration(path: str) -> float:
     if r.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {r.stderr.strip()}")
     return float(json.loads(r.stdout)["format"]["duration"])
-
-def mp3_to_wav(mp3_path: str, wav_path: str) -> None:
-    """Convert MP3 to 22050 Hz mono 16-bit WAV (for ACM) and MFA."""
-    r = subprocess.run(
-        ["ffmpeg", "-y", "-i", mp3_path,
-         "-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le", wav_path],
-        capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"FFmpeg failed on '{mp3_path}':\n{r.stderr.strip()}")
 
 # ─── TextGrid parser ──────────────────────────────────────────────────────────
 
@@ -465,6 +455,10 @@ def main():
         help="Path to snd2acm.exe if not on PATH or script folder")
     parser.add_argument("--mfa-env",      default="aligner",
         help="Conda env name where MFA is installed (default: aligner)")
+    parser.add_argument("--lufs",         type=float, default=-16.0,
+        help="Target loudness in LUFS for normalization (default: -16.0)")
+    parser.add_argument("--no-norm",      action="store_true",
+        help="Skip EBU R128 loudness normalization during the encode step")
     parser.add_argument("--no-enc",       action="store_true",
         help="Skip audio collection, WAV encoding, and ACM generation (wav, enc, and acm steps)")
     parser.add_argument("--no-mfa",       action="store_true",
@@ -667,17 +661,28 @@ def main():
         for stem, src_path, txt_path in wav_pairs:
             enc_path = os.path.join(args.wavencdir, stem + ".wav")
             try:
-                if src_path.lower().endswith(".wav") and not wav_needs_encoding(src_path):
+                # Only shortcut to copying if normalization is disabled AND format is already perfect
+                if args.no_norm and src_path.lower().endswith(".wav") and not wav_needs_encoding(src_path):
                     shutil.copy2(src_path, enc_path)
                     print(f"  copied   {enc_path}  (already 22050 Hz mono 16-bit)")
                 else:
-                    r = subprocess.run(
-                        ["ffmpeg", "-y", "-i", src_path,
-                         "-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le", enc_path],
-                        capture_output=True, text=True)
+                    cmd = ["ffmpeg", "-y", "-i", src_path]
+                    
+                    # Apply EBU R128 normalization unless opted out
+                    if not args.no_norm:
+                        # I = Integrated Loudness, LRA = Loudness Range, TP = True Peak
+                        cmd.extend(["-af", f"loudnorm=I={args.lufs}:LRA=11:TP=-1.5"])
+                        
+                    # Standardize format for ACM / MFA
+                    cmd.extend(["-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le", enc_path])
+                    
+                    r = subprocess.run(cmd, capture_output=True, text=True)
                     if r.returncode != 0:
                         raise RuntimeError(r.stderr.strip())
-                    print(f"  encoded  {enc_path}")
+                    
+                    action_txt = "enc+norm" if not args.no_norm else "encoded"
+                    print(f"  {action_txt.ljust(8)} {enc_path}")
+                    
                 enc_pairs.append((stem, enc_path, txt_path))
                 enc_ok += 1
             except RuntimeError as e:
