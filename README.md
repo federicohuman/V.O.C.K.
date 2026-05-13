@@ -27,7 +27,7 @@ sound\speech\<npc>\*.lip
 sound\speech\<npc>\*.txt
 ```
 
-Where <npc> is the identifier for that particular NPC. For example, Aunt Morlis is identified by MOR:
+Where `<npc>` is the identifier for that particular NPC. For example, Aunt Morlis is identified by MOR:
 ```
 text\english\dialog\acmorlis.msg
 sound\speech\mor\mor1.acm
