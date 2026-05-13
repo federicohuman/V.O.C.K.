@@ -1,6 +1,7 @@
 # Generated output folders — contain game assets, do not commit
 mp3/
 wav/
+wav-enc/
 acm/
 txt/
 lip/
