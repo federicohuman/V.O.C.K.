@@ -185,8 +185,8 @@ python3 vock.py --msg /path/to/acmorlis.msg
 
 ## Manual text-correction workflow (human-in-the-loop)
 
-Fallout 2 dialogue sometimes contains placeholders, in-jokes, or names that MFA
-cannot align correctly (e.g. `[Player Name]`, `Vault City`, `Arroyo`).  
+Fallout 2 dialogue sometimes contains placeholders, numbers, jokes, or names that MFA
+cannot align correctly (e.g. `[Player Name]`, `$25`, `Vault 13`).
 The recommended workflow is:
 
 **1 — Extract the TXT files**
@@ -200,6 +200,8 @@ For example, `txt/MOR1.txt` might contain:
 
 ```
 What is it? You know I have a lot to do, [Player Name]!
+That’ll cost you $70.
+Vault 13.
 ```
 
 **2 — Edit the TXT files**
@@ -208,6 +210,8 @@ Open any `.txt` file in `txt/` and correct the text so MFA can align it:
 
 ```
 What is it? You know I have a lot to do, Chosen One!
+That’ll cost you seventy dollars.
+Vault thirteen.
 ```
 
 Save the file. `vock.py` will **never overwrite a manually-edited file** once it
