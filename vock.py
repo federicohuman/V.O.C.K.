@@ -220,6 +220,77 @@ def parse_textgrid_phones(tg_path: str) -> list:
         tier_text, re.DOTALL)
     return [(float(xmin), float(xmax), label) for xmin, xmax, label in intervals]
 
+def parse_textgrid_words(tg_path: str) -> list:
+    """Return [(xmin, xmax, word), …] from the words tier."""
+    with open(tg_path, encoding="utf-8", errors="replace") as f:
+        content = f.read()
+    words_match = re.search(
+        r'name\s*=\s*"words?"(.*?)(?=(?:item\s*\[|\Z))',
+        content, re.DOTALL | re.IGNORECASE)
+    if not words_match:
+        raise ValueError(f"No 'words' tier in {tg_path}")
+    tier_text = words_match.group(1)
+    intervals = re.findall(
+        r'xmin\s*=\s*([\d.]+).*?xmax\s*=\s*([\d.]+).*?text\s*=\s*"([^"]*)"',
+        tier_text, re.DOTALL)
+    return [(float(xmin), float(xmax), label) for xmin, xmax, label in intervals]
+
+def find_spn_ranges(tg_path: str) -> list:
+    """Return [(xmin, xmax), …] for every 'spn' interval in the phones tier."""
+    return [(xmin, xmax)
+            for xmin, xmax, label in parse_textgrid_phones(tg_path)
+            if label.strip().lower() == "spn"]
+
+def report_unknown_words(textgrid_dir: str) -> None:
+    """
+    Scan all TextGrids in textgrid_dir.
+    For each word whose time range contains a 'spn' phone interval,
+    write a report to unknown_words.txt in the same folder.
+    """
+    findings = []
+    tg_files = sorted(f for f in os.listdir(textgrid_dir) if f.endswith(".TextGrid"))
+    if not tg_files:
+        return findings
+
+    for tg_file in tg_files:
+        stem    = os.path.splitext(tg_file)[0]
+        tg_path = os.path.join(textgrid_dir, tg_file)
+        try:
+            words      = parse_textgrid_words(tg_path)
+            spn_ranges = find_spn_ranges(tg_path)
+        except Exception as e:
+            print(f"  [warn] could not scan {tg_file}: {e}")
+            continue
+
+        for xmin, xmax, word in words:
+            if not word.strip():
+                continue
+            for smin, smax in spn_ranges:
+                if smin >= xmin and smax <= xmax + 0.001:
+                    findings.append((stem, word, xmin, xmax))
+                    break
+
+    out_path = os.path.join(textgrid_dir, "unknown_words.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        if findings:
+            n_files = len({s for s, *_ in findings})
+            f.write("Unknown words (MFA assigned 'spn')\n")
+            f.write(f"{len(findings)} occurrence(s) in {n_files} file(s).\n")
+            f.write("Add pronunciations for these words to custom.dict\n")
+            f.write("and re-run --steps mfa lip dat\n")
+            current_stem = None
+            for stem, word, xmin, xmax in findings:
+                if stem != current_stem:
+                    f.write(f"\n{stem}.txt\n")
+                    current_stem = stem
+                f.write(f"  {word:<20}  {xmin:.2f}s – {xmax:.2f}s\n")
+            print(f"  {len(findings)} unknown word(s) found — see '{out_path}'")
+        else:
+            f.write("No unknown words — all words recognised by MFA.\n")
+            print("  No unknown words — all words recognised by MFA.")
+
+    return findings
+
 def build_events_from_textgrid(tg_path: str) -> list:
     intervals = parse_textgrid_phones(tg_path)
     events = []
@@ -234,14 +305,15 @@ def build_events_from_textgrid(tg_path: str) -> list:
 
 # ─── MFA ─────────────────────────────────────────────────────────────────────
 
-def run_mfa(corpus_dir: str, output_dir: str, mfa_env: str) -> bool:
+def run_mfa(corpus_dir: str, output_dir: str, mfa_env: str,
+            dict_path: str = "english_us_arpa") -> bool:
     """Run MFA alignment via 'conda run'. Returns True on success."""
     cmd = [
         "conda", "run", "-n", mfa_env, "--no-capture-output",
         "mfa", "align", "--clean",
         "--output_format", "long_textgrid",
         corpus_dir,
-        "english_us_arpa",
+        dict_path,
         "english_us_arpa",
         output_dir,
     ]
@@ -251,6 +323,30 @@ def run_mfa(corpus_dir: str, output_dir: str, mfa_env: str) -> bool:
     return r.returncode == 0
 
 # ─── snd2acm ─────────────────────────────────────────────────────────────────
+
+DEFAULT_MFA_DICT_PATHS = [
+    os.path.expanduser("~/Documents/MFA/pretrained_models/dictionary/english_us_arpa.dict"),
+    os.path.expanduser("~/.local/share/montreal-forced-aligner/pretrained_models/dictionary/english_us_arpa.dict"),
+]
+
+def find_mfa_dict() -> str | None:
+    for path in DEFAULT_MFA_DICT_PATHS:
+        if os.path.isfile(path):
+            return path
+    return None
+
+def merge_dictionaries(main_dict: str, custom_dict: str, out_path: str) -> None:
+    """Append custom_dict entries to a copy of main_dict, written to out_path."""
+    with open(main_dict, encoding="utf-8") as f:
+        base = f.read()
+    with open(custom_dict, encoding="utf-8") as f:
+        custom = f.read().strip()
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(base)
+        if not base.endswith("\n"):
+            f.write("\n")
+        f.write(custom)
+        f.write("\n")
 
 def find_snd2acm(hint: str = None) -> str | None:
     candidates = []
@@ -499,6 +595,8 @@ def main():
         help="Explicit path to snd2acm.exe")
     parser.add_argument("--mfa-env",      default="aligner",
         help="Conda env with MFA installed (default: aligner)")
+    parser.add_argument("--custom-dict",  default=None,
+        help="Path to custom pronunciation dictionary (default: custom.dict next to vock.py)")
     # Audio options
     parser.add_argument("--lufs",         type=float, default=-16.0,
         help="Target loudness in LUFS (default: -16.0)")
@@ -705,7 +803,22 @@ def main():
                 mfa_tmp_out = os.path.join(corpus_dir, "aligned")
                 os.makedirs(mfa_tmp_out)
 
-                mfa_ok = run_mfa(corpus_dir, mfa_tmp_out, args.mfa_env)
+                # Resolve dictionary — merge custom.dict if present
+                script_dir   = os.path.dirname(os.path.abspath(__file__))
+                custom_dict  = args.custom_dict or os.path.join(script_dir, "custom.dict")
+                main_dict    = find_mfa_dict()
+                dict_arg     = "english_us_arpa"
+                if os.path.isfile(custom_dict):
+                    if main_dict:
+                        merged = os.path.join(corpus_dir, "merged.dict")
+                        merge_dictionaries(main_dict, custom_dict, merged)
+                        dict_arg = merged
+                        print(f"  Using custom dictionary: {custom_dict}")
+                    else:
+                        print(f"  [warn] custom.dict found but main MFA dictionary "
+                              f"could not be located — using english_us_arpa only.")
+
+                mfa_ok = run_mfa(corpus_dir, mfa_tmp_out, args.mfa_env, dict_arg)
 
                 if mfa_ok:
                     tg_count = 0
@@ -716,6 +829,7 @@ def main():
                                 os.path.join(args.textgriddir, f))
                             tg_count += 1
                     print(f"\n  {tg_count} TextGrid(s) saved to '{args.textgriddir}/'")
+                    report_unknown_words(args.textgriddir)
                 else:
                     print("\n  MFA failed — text approximation will be used for LIP files.")
     else:
