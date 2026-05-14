@@ -1,21 +1,52 @@
 # V.O.C.K. — Vocal Output Creation Kit
 
 A Python script that automates the complete voice modding pipeline for Fallout 2.
-Give it a `.MSG` dialogue file and a folder of audio files (mp3 or wav) — it produces a ready-to-install `vock.dat` containing ACM audio, LIP sync, and dialogue files.
+Give it `.msg` dialogue file(s) and a folder of audio files — it produces a
+ready-to-install `vock.dat` containing ACM audio, LIP sync, and dialogue files.
 
 ## What it does
 
 ```
-  MSG ────────────────────────────────────────────────► TXT (one per line)
-  WAV or MP3 ──[Normalize and encode]───► wav-enc/ ───► ACM (via snd2acm)
-                                              │
-                                   [MFA align / approximation]
-                                              │
-                                        TextGrid ─────► LIP (Fallout format)
-
-  MSG + TXT + ACM + LIP ──────────────────────────────► DAT (vock.dat)
+  msg ────────[parse CP1252]────────────────► txt (one per dialog line)
+                                              ↕ optional: edit manually here
+  audio ──────[ffmpeg normalize + encode]───► wav  (22050 Hz mono 16-bit)
+  wav ────────[snd2acm / wine]──────────────► acm
+  wav + txt ──[MFA]─────────────────────────► textgrid
+  textgrid (or txt fallback) ───────────────► lip
+  msg + acm + lip + txt ────────────────────► dat/vock.dat
 ```
 
+## Folder structure
+
+```
+vock/
+├── vock.py
+├── snd2acm.exe          ← download separately (see Requirements)
+├── msg/                 ← put your .MSG file(s) here
+├── audio/               ← put your audio files here (MP3, WAV, FLAC, M4A, …)
+├── txt/                 ← generated + editable: one .txt per audio line
+├── wav/                 ← generated: 22050 Hz mono 16-bit PCM (ready for ACM/MFA)
+├── acm/                 ← generated: Fallout 2 ACM audio files
+├── textgrid/            ← generated: MFA alignment TextGrid files
+├── lip/                 ← generated: Fallout 2 LIP files
+└── dat/
+    └── vock.dat         ← generated: ready-to-install Fallout 2 DAT archive
+```
+
+## Pipeline steps
+
+| Step  | Input              | Output         | Description                                      |
+|-------|--------------------|----------------|--------------------------------------------------|
+| `msg` | `msg/*.msg`        | `txt/*.txt`    | Extract dialogue lines (one `.txt` per tag)      |
+| `wav` | `audio/*`          | `wav/*.wav`    | Normalise + encode to 22050 Hz mono 16-bit PCM   |
+| `acm` | `wav/*.wav`        | `acm/*.acm`    | Convert to Fallout 2 ACM via `snd2acm.exe`       |
+| `mfa` | `wav/` + `txt/`    | `textgrid/`    | MFA forced alignment → phoneme timing            |
+| `lip` | `textgrid/`+`txt/` | `lip/*.lip`    | Generate Fallout 2 LIP binary files              |
+| `dat` | `msg/`+`acm/`+…    | `dat/vock.dat` | Pack everything into a Fallout 2 DAT2 archive    |
+
+The `lip` step **prioritises MFA TextGrid data** for accurate phoneme timing but
+automatically falls back to a text-based phoneme approximation (letter-to-phoneme
+mapping) if no TextGrid is available for a given file.
 
 ## Output DAT structure
 
@@ -26,68 +57,52 @@ sound\speech\<npc>\*.lip
 sound\speech\<npc>\*.txt
 ```
 
-Where `<npc>` is the identifier for that particular NPC. For example, Aunt Morlis is identified by MOR:
+Where `<npc>` is derived automatically from the audio tag, e.g.:
+
 ```
 text\english\dialog\acmorlis.msg
 sound\speech\mor\mor1.acm
 sound\speech\mor\mor1.lip
 sound\speech\mor\mor1.txt
-...
-```
-
-The NPC folder name is derived automatically from the audio tags in the MSG file (e.g. `MOR1` → `MOR`).
-
-## Folder structure
-
-```
-vock/
-├── vock.py
-├── snd2acm.exe          ← download separately (see Requirements)
-├── msg/                 ← put your .MSG file(s) here
-├── mp3/                 ← put your .MP3 files here
-├── wav/                 ← put your .WAV files here (any sample rate / bit depth)
-├── txt/                 ← generated: one .txt per audio line
-├── wav-enc/             ← generated: 22050 Hz mono 16-bit PCM (ready for ACM)
-├── acm/                 ← generated: Fallout 2 ACM audio files
-├── textgrid/            ← generated: MFA alignment TextGrid files
-├── lip/                 ← generated: Fallout 2 LIP files
-└── dat/
-    └── vock.dat         ← generated: ready-to-install Fallout 2 DAT archive
 ```
 
 ## Requirements
 
 ### 1. Environment Setup (Windows)
-WSL (Windows Subsystem for Linux) is recommended to run the Linux-based alignment tools. Open Windows PowerShell as Administrator and run:
+
+WSL (Windows Subsystem for Linux) is recommended. Open PowerShell as Administrator:
+
 ```powershell
 wsl --install
 ```
+
 Follow the prompts in the new terminal window to create your Linux username and password.
 
-### 2. System Dependencies (Linux/WSL)
-Update package lists:
+### 2. System Dependencies (Linux / WSL)
+
 ```bash
 sudo apt update && sudo apt upgrade -y
 ```
 
-### 3. FFmpeg
-Required for audio processing:
+### 3. FFmpeg (required for `wav` and `lip` steps)
+
 ```bash
 sudo apt install ffmpeg -y
 ```
 
-### 4. snd2acm
+### 4. snd2acm (required for `acm` step)
+
 The only known ACM encoder for Fallout 2, by ABel/TeamX.
 
 Download: https://fodev.net/files/mirrors/teamx-utils/snd2acm.rar
 
-Extract and place `snd2acm.exe` in the same folder as `vock.py`. Install Wine to run it:
+Extract and place `snd2acm.exe` next to `vock.py`. On Linux also install Wine:
+
 ```bash
 sudo apt install wine -y
 ```
 
-### 5. Montreal Forced Aligner (MFA)
-Used for accurate per-phoneme lip sync timing.
+### 5. Montreal Forced Aligner — MFA (required for `mfa` step)
 
 ```bash
 # Install Miniconda
@@ -99,118 +114,166 @@ bash Miniconda3-latest-Linux-x86_64.sh -b
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
-# Create the MFA 'aligner' environment and activate it
+# Create the MFA environment
 conda create -n aligner -c conda-forge montreal-forced-aligner python=3.10 -y
 conda activate aligner
 
-# Download the English US acoustic models and dictionaries
+# Download models
 mfa model download acoustic   english_us_arpa
 mfa model download dictionary english_us_arpa
 ```
 
 ## Usage
 
+### Full pipeline (with MFA alignment)
+
 ```bash
 conda activate aligner
 python3 vock.py
 ```
 
-The script auto-detects your `.MSG` file(s) from `./msg/` and your audio files from `./mp3/` and/or `./wav/`.
+### Run only specific steps
 
-### Options
-
-```
---msg PATH        Path to a .MSG file or folder (default: ./msg/)
---mp3dir DIR      MP3 input folder (default: ./mp3)
---wavdir DIR      WAV input folder — user-supplied files (default: ./wav)
---wavencdir DIR   Encoded WAV output folder (default: ./wav-enc)
---acmdir DIR      ACM output folder (default: ./acm)
---txtdir DIR      TXT output folder (default: ./txt)
---textgriddir DIR TextGrid output folder (default: ./textgrid)
---lipdir DIR      LIP output folder (default: ./lip)
---datfile PATH    Output DAT file path (default: dat/vock.dat)
---snd2acm PATH    Path to snd2acm.exe if not in script folder
---mfa-env NAME    Conda environment name (default: aligner)
---lufs FLOAT      Target loudness in LUFS for normalization (default: -16.0)
---no-norm         Skip EBU R128 loudness normalization during the encode step
---steps STEP ...  Run only the specified step(s): msg wav enc acm mfa lip dat
---no-enc          Skip audio collection, WAV encoding, and ACM generation (wav, enc, acm steps)
---no-mfa          Skip MFA; use text-only phoneme approximation
---no-acm          Skip ACM generation only (enc still runs)
---no-dat          Skip DAT file creation
-```
-
-### Examples
-
-```bash
-# Full pipeline
-python3 vock.py
-
-# Custom DAT filename
-python3 vock.py --datfile dat/patch001.dat
-
-# Disable loudness normalization completely
-python3 vock.py --no-norm
-
-# Adjust the target loudness (e.g. make it slightly quieter)
-python3 vock.py --lufs -18.0
-
-# Skip encoding and ACM (WAV-only workflow without snd2acm)
-python3 vock.py --no-enc
-
-# Skip ACM only (encode still runs; useful to inspect wav-enc/ first)
-python3 vock.py --no-acm
-
-# Skip MFA (faster, less accurate lip sync)
-python3 vock.py --no-mfa
-
-# Generate everything except the DAT
-python3 vock.py --no-dat
-```
-
-### Running individual steps
-
-Use `--steps` to run only specific parts of the pipeline. This is useful when
-files from a previous run already exist and you only need to redo one step.
-
-Available steps: `msg` `wav` `enc` `acm` `mfa` `lip` `dat`
+Use `--steps` to run exactly the steps you name and skip the rest.
 
 ```bash
 # Rebuild just the DAT from existing files
 python3 vock.py --steps dat
 
-# Re-run MFA alignment and regenerate LIP files
-python3 vock.py --steps mfa lip
-
-# Re-run MFA, LIP, and DAT together
+# Re-run MFA alignment and regenerate LIP + DAT
 python3 vock.py --steps mfa lip dat
 
-# Re-encode and convert to ACM only (e.g. after replacing audio files)
-python3 vock.py --steps enc acm
+# Re-encode audio and rebuild ACM only (e.g. after swapping audio files)
+python3 vock.py --steps wav acm
 
-# Re-run everything from encoding onwards (skip MSG parsing and audio collection)
-python3 vock.py --steps enc acm mfa lip dat
-
-# Re-run encoding only (e.g. to inspect wav-enc/ before committing to ACM)
-python3 vock.py --steps enc
+# Run everything from the encoding step onward
+python3 vock.py --steps wav acm mfa lip dat
 ```
 
-When using `--steps`, skipped steps print `[skipped]` in the console so you can confirm what ran. Files from previous runs in the output folders are used as-is by later steps — it is your responsibility to ensure they are up to date.
+### Skip specific steps from the full pipeline
+
+Use `--skip` to run everything except the named step(s).
+
+```bash
+# Full pipeline but skip MFA (text approximation used for LIP)
+python3 vock.py --skip mfa
+
+# Full pipeline but skip ACM generation (no snd2acm.exe needed)
+python3 vock.py --skip acm
+
+# Skip both MFA and ACM (minimal dependencies: only ffmpeg required)
+python3 vock.py --skip mfa acm
+```
+
+### Audio options
+
+```bash
+# Disable EBU R128 loudness normalisation
+python3 vock.py --no-norm
+
+# Set a custom loudness target (e.g. slightly quieter than the default -16 LUFS)
+python3 vock.py --lufs -18.0
+```
+
+### Custom paths
+
+```bash
+python3 vock.py --audiodir /path/to/my/audio
+python3 vock.py --datfile dat/patch001.dat
+python3 vock.py --msg /path/to/acmorlis.msg
+```
+
+## Manual text-correction workflow (human-in-the-loop)
+
+Fallout 2 dialogue sometimes contains placeholders, in-jokes, or names that MFA
+cannot align correctly (e.g. `[Player Name]`, `Vault City`, `Arroyo`).  
+The recommended workflow is:
+
+**1 — Extract the TXT files**
+
+```bash
+python3 vock.py --steps msg
+```
+
+This writes one `.txt` per audio-tagged line into `txt/`.  
+For example, `txt/MOR1.txt` might contain:
+
+```
+What is it? You know I have a lot to do, [Player Name]!
+```
+
+**2 — Edit the TXT files**
+
+Open any `.txt` file in `txt/` and correct the text so MFA can align it:
+
+```
+What is it? You know I have a lot to do, Chosen One!
+```
+
+Save the file. `vock.py` will **never overwrite a manually-edited file** once it
+exists — it detects the change and preserves your correction.
+
+**3 — Resume the pipeline from audio**
+
+```bash
+conda activate aligner
+python3 vock.py --steps wav acm mfa lip dat
+```
+
+The `mfa` and `lip` steps will read your corrected text from `txt/`.
+
+**Re-running the full pipeline later**
+
+If you run `python3 vock.py` again after editing a `.txt` file, the `msg` step
+will notice the existing file differs from the MSG source and print
+`[kept manual edit]` — your correction is safe.
+
+## All CLI options
+
+```
+--msgdir DIR          Folder containing .MSG file(s) (default: msg)
+--audiodir DIR     Audio input folder; any format supported (default: audio)
+--txtdir DIR       TXT output/edit folder (default: txt)
+--wavdir DIR       Standardised WAV output folder (default: wav)
+--acmdir DIR       ACM output folder (default: acm)
+--textgriddir DIR  TextGrid output folder (default: textgrid)
+--lipdir DIR       LIP output folder (default: lip)
+--datfile PATH     Output DAT path (default: dat/vock.dat)
+--snd2acm PATH     Explicit path to snd2acm.exe
+--mfa-env NAME     Conda env with MFA installed (default: aligner)
+--lufs FLOAT       Target loudness in LUFS (default: -16.0)
+--no-norm          Skip EBU R128 loudness normalisation
+--steps STEP ...   Run ONLY these steps
+--skip  STEP ...   Skip these steps from the full pipeline
+```
+
+Available steps: `msg`  `wav`  `acm`  `mfa`  `lip`  `dat`
 
 ## Notes
 
-- **WAV takes priority over MP3.** If both exist for the same file stem, the WAV is used and the MP3 is ignored.
-- **Loudness Normalization.** Audio is automatically normalized to -16 LUFS via EBU R128 during the `enc` step to match original game files. Use `--no-norm` to disable this or `--lufs` to change the target.
-- **`wav/` is for source files; `wav-enc/` is for output.** Files in `wav/` can be any sample rate or bit depth — the `enc` step normalises everything to 22050 Hz mono 16-bit PCM. `wav-enc/` is what `snd2acm` and MFA actually read.
-- **`--no-enc` skips audio collection, encoding, and ACM.** Because `enc` depends on `wav`, and `acm` depends on `wav-enc/` output, passing `--no-enc` automatically drops all three (`wav`, `enc`, `acm`) from the run, preventing snd2acm from being fed incorrectly formatted files.
-- **`--no-acm` skips ACM only.** The `enc` step still runs and `wav-enc/` is populated. Useful if you want to inspect the encoded audio before committing to ACM generation.
-- **MFA fallback.** If MFA fails on a specific file (e.g. an unrecognised word), that file falls back to text-based phoneme approximation automatically. The rest of the batch continues normally.
-- **ACM files are optional in the DAT.** If ACM files are missing (e.g. you ran with `--no-enc` or `--no-acm`), the DAT will still contain LIP and TXT files.
-- **snd2acm on Linux.** Install Wine (`sudo apt install wine`) and the script will invoke `snd2acm.exe` through Wine automatically.
+- **Universal audio input.** The `wav` step accepts MP3, WAV, FLAC, M4A, AAC,
+  OGG, Opus, WMA — any format FFmpeg can decode. Duration is always read via
+  `ffprobe` for accuracy across all containers.
+- **TXT validation.** During the `wav` step, audio files without a matching
+  `.txt` file are skipped with a clear warning. This prevents untagged or
+  misnamed audio from silently entering the pipeline.
+- **Loudness normalisation.** Audio is normalised to −16 LUFS (EBU R128) during
+  the `wav` step to match original Fallout 2 game files. Use `--no-norm` to
+  disable or `--lufs` to change the target.
+- **MFA fallback.** If MFA fails on a file, that file automatically falls back to
+  text-based phoneme approximation. The rest of the batch continues normally.
+- **ACM files are optional in the DAT.** If you run with `--skip acm`, the DAT
+  still contains LIP and TXT files.
+- **Dependency fast-fail.** The script checks for `ffmpeg`, `ffprobe`, `conda`,
+  and `snd2acm.exe` before starting and exits with a clear install message if
+  anything required for the chosen steps is missing.
+- **snd2acm on Linux.** Install Wine and the script automatically invokes
+  `snd2acm.exe` through Wine.
 
 ## LIP file format
 
-The LIP binary format was reverse-engineered from Black_Electric's LIPS.py and validated against LIP Editor. Key constants:
+The LIP binary format was reverse-engineered from Black_Electric's LIPS.py and
+validated against LIP Editor. Key constants:
 
 - Version: `0x00000002`
 - Unknown constant at `0x04`: `0x00005800`
@@ -219,13 +282,15 @@ The LIP binary format was reverse-engineered from Black_Electric's LIPS.py and v
 
 ## DAT file format
 
-Uses the Fallout 2 DAT2 format (little-endian). Files are stored uncompressed. Format documented at https://fodev.net/files/fo2/dat.html
+Uses the Fallout 2 DAT2 format (little-endian). Files are stored uncompressed.
+Format documented at https://fodev.net/files/fo2/dat.html
 
 ## How to obtain the MSG file
 
-You must own a legal copy of Fallout 2 to do this.
+You must own a legal copy of Fallout 2.
 
-**fo2dat** is a tool used to unpack Fallout 2 DAT files. You need to build it from source.
+**fo2dat** unpacks Fallout 2 DAT files. Build from source:
+
 ```bash
 sudo apt install rustc cargo -y
 git clone https://github.com/adamkewley/fo2dat
@@ -234,23 +299,25 @@ cargo build --release
 sudo cp target/release/fo2dat /usr/local/bin/
 ```
 
-Once built, extract the dialogue files from your master.dat:
+Extract dialogue files from your `master.dat`:
+
 ```bash
 mkdir master
 fo2dat -xf master.dat -C master
 ```
 
-Copy the specific .MSG file you want to edit into the `vock/msg/` folder.
+Copy the specific `.MSG` file you want to edit into `vock/msg/`.
 
 ## How to edit the MSG file
 
-To make your NPC talk, you must link the dialogue lines to audio tags:
-1. Open your .MSG file (e.g., ACMORLIS.MSG) in a text editor.
-2. Locate the line you want to add voice to.
-3. The format is: `{103}{}{What is it? You know I have a lot to do!}`.
-4. Add your audio "tag" in the middle bracket: `{103}{MOR1}{What is it? You know I have a lot to do!}`.
-5. Save your audio file as `MOR1.mp3`. The script will see the MOR1 tag in the MSG and look for mp3/MOR1.mp3.
+1. Open your `.MSG` file (e.g. `ACMORLIS.MSG`) in a text editor.
+2. Locate the line you want to add voice to. The format is:
+   `{103}{}{What is it? You know I have a lot to do!}`
+3. Add your audio tag in the middle bracket:
+   `{103}{MOR1}{What is it? You know I have a lot to do!}`
+4. Save your audio file as `MOR1.mp3` (or `.wav`, `.flac`, etc.) in `audio/`.
+   The script matches the audio file to the MSG tag automatically.
 
 ## Other useful tools
 
-LIP Editor: https://fodev.net/files/mirrors/teamx-utils/LIPEditor0.96b.rar
+- LIP Editor: https://fodev.net/files/mirrors/teamx-utils/LIPEditor0.96b.rar
