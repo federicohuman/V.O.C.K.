@@ -21,19 +21,19 @@ ready-to-install `vock.dat` containing ACM audio, LIP sync, and dialogue files.
 ```
 vock/
 ├── vock.py
-├── dict_lookup.py       ← interactive MFA dictionary lookup tool
-├── snd2acm.exe          ← download separately (see Requirements)
-├── custom.dict          ← optional: custom pronunciations for game-specific words
-├── msg/                 ← put your .MSG file(s) here
-├── audio/               ← put your audio files here (MP3, WAV, FLAC, M4A, …)
-├── txt/                 ← generated + editable: one .txt per audio line
-├── wav/                 ← generated: 22050 Hz mono 16-bit PCM (ready for ACM/MFA)
-├── acm/                 ← generated: Fallout 2 ACM audio files
-├── textgrid/            ← generated: MFA alignment TextGrid files
+├── dict_lookup.py        ← interactive MFA dictionary lookup tool
+├── snd2acm.exe           ← download separately (see Requirements)
+├── custom.dict           ← optional: custom pronunciations for game-specific words
+├── msg/                  ← put your .MSG file(s) here
+├── audio/                ← put your audio files here (MP3, WAV, FLAC, M4A, …)
+├── txt/                  ← generated + editable: one .txt per audio line
+├── wav/                  ← generated: 22050 Hz mono 16-bit PCM (ready for ACM/MFA)
+├── acm/                  ← generated: Fallout 2 ACM audio files
+├── textgrid/             ← generated: MFA alignment TextGrid files
 │   └── unknown_words.txt ← generated: words MFA could not align (after mfa step)
-├── lip/                 ← generated: Fallout 2 LIP files
+├── lip/                  ← generated: Fallout 2 LIP files
 └── dat/
-    └── vock.dat         ← generated: ready-to-install Fallout 2 DAT archive
+    └── vock.dat          ← generated: ready-to-install Fallout 2 DAT archive
 ```
 
 ## Pipeline steps
@@ -181,9 +181,9 @@ python3 vock.py --lufs -18.0
 ### Custom paths
 
 ```bash
-python3 vock.py --audiodir /path/to/my/audio
-python3 vock.py --datfile dat/patch001.dat
-python3 vock.py --msg /path/to/acmorlis.msg
+python3 vock.py --audiodir /path/to/my/audio/
+python3 vock.py --datfile dat/patch.dat
+python3 vock.py --msgdir /path/to/msg/
 ```
 
 ## Manual text-correction workflow (human-in-the-loop)
@@ -238,7 +238,8 @@ will notice the existing file differs from the MSG source and print
 ## Dictionary lookup
 
 `dict_lookup.py` is a standalone interactive tool that lets you check whether a
-word is known to MFA before committing it to a `.txt` file.
+word is known to MFA before committing it to a `.txt` file. It also loads the
+`custom.dict`. The custom words are flagged with `[custom]`.
 
 ```bash
 python3 dict_lookup.py
@@ -248,19 +249,17 @@ Type words at the prompt to see their ARPAbet pronunciation(s):
 
 ```
 > geck
-  'geck' not found — MFA will assign 'spn' (spoken noise)
+  'geck'  →  G EH1 K  [custom]
 
 > hello
   hello  →  HH AH0 L OW1
   hello  →  HH EH0 L OW1
 
-> don't
-  don't  →  D OW1 N T
+> customword
+  'customword' not found — MFA will assign 'spn' (spoken noise)
 ```
 
-Use a straight apostrophe `'` in contractions — MFA's dictionary uses `don't`
-not `don't`. Words not found need either a manual text edit or a `custom.dict`
-entry.
+Words not found need either a manual text edit or a `custom.dict` entry.
 
 ## Custom pronunciation dictionary
 
@@ -297,7 +296,7 @@ Unknown words (MFA assigned 'spn')
 Add pronunciations for these words to custom.dict
 and re-run --steps mfa lip dat
 
-DUN1.txt
+SAL1.txt
   geck                  1.96s – 2.20s
 
 MOR2.txt
